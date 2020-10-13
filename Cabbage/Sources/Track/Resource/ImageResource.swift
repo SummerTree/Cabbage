@@ -10,7 +10,7 @@ import AVFoundation
 import CoreImage
 
 
-/// Provider a Image as video frame
+/// Provide a Image as video frame
 open class ImageResource: Resource {
     
     public init(image: CIImage, duration: CMTime) {
@@ -19,7 +19,6 @@ open class ImageResource: Resource {
         self.status = .avaliable
         self.duration = duration
         self.selectedTimeRange = CMTimeRange(start: CMTime.zero, duration: duration)
-        self.scaledDuration = duration
     }
     
     required public init() {
@@ -28,7 +27,7 @@ open class ImageResource: Resource {
     
     open var image: CIImage? = nil
     
-    open func image(at time: CMTime, renderSize: CGSize) -> CIImage? {
+    open override func image(at time: CMTime, renderSize: CGSize) -> CIImage? {
         return image
     }
     

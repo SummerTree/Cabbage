@@ -18,11 +18,6 @@ public class CompositionGenerator {
             needRebuildAudioMix = true
         }
     }
-    public var renderSize: CGSize? {
-        didSet {
-            needRebuildVideoComposition = true
-        }
-    }
     
     private var composition: AVComposition?
     private var videoComposition: AVVideoComposition?
@@ -162,8 +157,8 @@ public class CompositionGenerator {
                                         return false
                                     }
                                 }
-                                return true
                             }
+                            return true
                         }
                         return false
                     }) {
@@ -193,6 +188,7 @@ public class CompositionGenerator {
             }
         }
         self.composition = composition
+        self.needRebuildComposition = false
         return composition
     }
     
@@ -234,6 +230,7 @@ public class CompositionGenerator {
         let instructions: [VideoCompositionInstruction] = layerInstructionsSlices.map({ (slice) in
             let trackIDs = slice.1.map({ $0.trackID })
             let instruction = VideoCompositionInstruction(theSourceTrackIDs: trackIDs as [NSValue], forTimeRange: slice.0)
+            instruction.backgroundColor = timeline.backgroundColor
             instruction.layerInstructions = slice.1
             instruction.passingThroughVideoCompositionProvider = timeline.passingThroughVideoCompositionProvider
             instruction.mainTrackIDs = mainTrackIDs.filter({ trackIDs.contains($0) })
@@ -242,16 +239,11 @@ public class CompositionGenerator {
         
         let videoComposition = AVMutableVideoComposition()
         videoComposition.frameDuration = CMTime(value: 1, timescale: 30)
-        videoComposition.renderSize = {
-            if let renderSize = renderSize {
-                return renderSize
-            }
-            return CGSize.zero
-        }()
+        videoComposition.renderSize = self.timeline.renderSize
         videoComposition.instructions = instructions
         videoComposition.customVideoCompositorClass = VideoCompositor.self
         self.videoComposition = videoComposition
-        
+        self.needRebuildVideoComposition = false
         return videoComposition
     }
     
@@ -264,13 +256,25 @@ public class CompositionGenerator {
         
         var audioParameters = [AVMutableAudioMixInputParameters]()
         
+        func createInputParameter(track: AVCompositionTrack) -> AVMutableAudioMixInputParameters {
+            var inputParameter = audioParameters.first { (parameters) -> Bool in
+                return parameters.trackID == track.trackID
+            }
+            if inputParameter == nil {
+                inputParameter = AVMutableAudioMixInputParameters(track: track)
+                audioParameters.append(inputParameter!)
+            }
+            
+            return inputParameter!
+        }
+        
         mainAudioTrackInfo.forEach { (info) in
             let track = info.track
-            let inputParameter = AVMutableAudioMixInputParameters(track: track)
+            let inputParameter = createInputParameter(track: track)
             info.info.forEach({ (provider) in
                 provider.configure(audioMixParameters: inputParameter)
                 
-                if let index = timeline.audioChannel.index(where: { $0 === provider }) {
+                if let index = timeline.audioChannel.firstIndex(where: { $0 === provider }) {
                     if let transitions = audioTransitionInfo[index] {
                         if let segment = track.segments.first(where: { $0.timeMapping.target == provider.timeRange }) {
                             let targetTimeRange = segment.timeMapping.target
@@ -284,15 +288,13 @@ public class CompositionGenerator {
                     }
                 }
             })
-            audioParameters.append(inputParameter)
         }
         
         audioTrackInfo.forEach { (info) in
             let track = info.track
             let provider = info.info
-            let inputParameter = AVMutableAudioMixInputParameters(track: track)
+            let inputParameter = createInputParameter(track: track)
             provider.configure(audioMixParameters: inputParameter)
-            audioParameters.append(inputParameter)
         }
         
         if audioParameters.count == 0 {
@@ -302,6 +304,7 @@ public class CompositionGenerator {
         let audioMix = AVMutableAudioMix()
         audioMix.inputParameters = audioParameters
         self.audioMix = audioMix
+        self.needRebuildAudioMix = false
         return audioMix
     }
     
@@ -335,25 +338,34 @@ public class CompositionGenerator {
             var slices = layerInstructionsSlices
             
             var leftTimeRanges: [CMTimeRange] = [layerInstruction.timeRange]
+            var increaseNumber = 0
             layerInstructionsSlices.enumerated().forEach({ (offset, slice) in
                 let intersectionTimeRange = slice.0.intersection(layerInstruction.timeRange)
                 if intersectionTimeRange.duration.seconds > 0 {
-                    slices.remove(at: offset)
+                    slices.remove(at: offset + increaseNumber)
+                    
+                    var currentSlices: [(CMTimeRange, [VideoCompositionLayerInstruction])] = []
                     let sliceTimeRanges = CMTimeRange.sliceTimeRanges(for: layerInstruction.timeRange, timeRange2: slice.0)
                     sliceTimeRanges.forEach({ (timeRange) in
                         if slice.0.containsTimeRange(timeRange) {
                             if layerInstruction.timeRange.containsTimeRange(timeRange)  {
                                 let newSlice = (timeRange, slice.1 + [layerInstruction])
-                                slices.insert(newSlice, at: offset)
+                                currentSlices.append(newSlice)
                                 leftTimeRanges = leftTimeRanges.flatMap({ (leftTimeRange) -> [CMTimeRange] in
                                     return leftTimeRange.substruct(timeRange)
                                 })
                             } else {
                                 let newSlice = (timeRange, slice.1)
-                                slices.insert(newSlice, at: offset)
+                                currentSlices.append(newSlice)
                             }
                         }
                     })
+                    
+                    currentSlices.reversed().forEach({ (slice) in
+                        slices.insert(slice, at: offset + increaseNumber)
+                    })
+                    
+                    increaseNumber += currentSlices.count - 1
                 }
             })
             
@@ -362,6 +374,9 @@ public class CompositionGenerator {
             })
             
             layerInstructionsSlices = slices
+        }
+        layerInstructionsSlices = layerInstructionsSlices.sorted { (slice1, slice2) -> Bool in
+            return slice1.0.start < slice2.0.start
         }
         return layerInstructionsSlices
     }

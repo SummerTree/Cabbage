@@ -18,6 +18,7 @@ public struct ResourceTrackInfo {
 
 public protocol ResourceTrackInfoProvider: class {
     func trackInfo(for type: AVMediaType, at index: Int) -> ResourceTrackInfo
+    func image(at time: CMTime, renderSize: CGSize) -> CIImage?
 }
 
 open class Resource: NSObject, NSCopying, ResourceTrackInfoProvider {
@@ -31,7 +32,18 @@ open class Resource: NSObject, NSCopying, ResourceTrackInfoProvider {
     /// Selected time range, indicate how many resources will be inserted to AVCompositionTrack
     open var selectedTimeRange: CMTimeRange = CMTimeRange.zero
     
-    open var scaledDuration: CMTime = CMTime.zero
+    private var _scaledDuration: CMTime = CMTime.invalid
+    public var scaledDuration: CMTime {
+        get {
+            if !_scaledDuration.isValid {
+                return selectedTimeRange.duration
+            }
+            return _scaledDuration
+        }
+        set {
+            _scaledDuration = newValue
+        }
+    }
     
     public func sourceTime(for timelineTime: CMTime) -> CMTime {
         let seconds = selectedTimeRange.start.seconds + timelineTime.seconds * (selectedTimeRange.duration.seconds / scaledDuration.seconds)
@@ -93,13 +105,20 @@ open class Resource: NSObject, NSCopying, ResourceTrackInfoProvider {
         let emptyTimeRange = CMTimeRangeMake(start: CMTime.zero, duration: emptyDuration)
         return ResourceTrackInfo(track: track,
                                  selectedTimeRange: emptyTimeRange,
-                                 scaleToDuration: selectedTimeRange.duration)
+                                 scaleToDuration: scaledDuration)
+    }
+    
+    open func image(at time: CMTime, renderSize: CGSize) -> CIImage? {
+        return nil
     }
     
     // MARK: - Helper
     
     private static let emptyAsset: AVAsset? = {
         let bundle = Bundle(for: ImageResource.self)
+        if let videoURL = bundle.url(forResource: "black_empty", withExtension: "mp4") {
+            return AVAsset(url: videoURL)
+        }
         if let bundleURL = bundle.resourceURL?.appendingPathComponent("Cabbage.bundle") {
             let resourceBundle = Bundle.init(url: bundleURL)
             if let videoURL = resourceBundle?.url(forResource: "black_empty", withExtension: "mp4") {
@@ -126,5 +145,11 @@ public class ResourceTask {
     
     public func cancel() {
         cancelHandler?()
+    }
+}
+
+public extension Resource {
+    func setSpeed(_ speed: Float) {
+        scaledDuration = selectedTimeRange.duration * (1 / speed)
     }
 }

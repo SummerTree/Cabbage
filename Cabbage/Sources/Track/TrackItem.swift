@@ -13,7 +13,9 @@ open class TrackItem: NSObject, NSCopying, TransitionableVideoProvider, Transiti
     
     public var identifier: String
     public var resource: Resource
-    public var configuration: TrackConfiguration
+
+    public var videoConfiguration: VideoConfiguration = VideoConfiguration.createDefaultConfiguration()
+    public var audioConfiguration: AudioConfiguration = .createDefaultConfiguration()
     
     public var videoTransition: VideoTransition?
     public var audioTransition: AudioTransition?
@@ -21,7 +23,6 @@ open class TrackItem: NSObject, NSCopying, TransitionableVideoProvider, Transiti
     public required init(resource: Resource) {
         identifier = ProcessInfo.processInfo.globallyUniqueString
         self.resource = resource
-        configuration = TrackConfiguration()
         super.init()
     }
     
@@ -30,11 +31,12 @@ open class TrackItem: NSObject, NSCopying, TransitionableVideoProvider, Transiti
     open func copy(with zone: NSZone? = nil) -> Any {
         let item = type(of: self).init(resource: resource.copy() as! Resource)
         item.identifier = identifier
-        item.configuration = configuration.copy() as! TrackConfiguration
         item.videoTransition = videoTransition
         item.audioTransition = audioTransition
         item.startTime = startTime
         item.duration = duration
+        item.videoConfiguration = videoConfiguration.copy() as! VideoConfiguration
+        item.audioConfiguration = audioConfiguration.copy() as! AudioConfiguration
         return item
     }
     
@@ -82,16 +84,14 @@ open class TrackItem: NSObject, NSCopying, TransitionableVideoProvider, Transiti
     
     open func applyEffect(to sourceImage: CIImage, at time: CMTime, renderSize: CGSize) -> CIImage {
         var finalImage: CIImage = {
-            if let resource = resource as? ImageResource {
-                let relativeTime = time - self.startTime
-                if let resourceImage = resource.image(at: relativeTime, renderSize: renderSize) {
-                    return resourceImage
-                }
+            let relativeTime = time - self.startTime
+            if let sourceImage = resource.image(at: relativeTime, renderSize: renderSize) {
+                return sourceImage
             }
             return sourceImage
         }()
         let info = VideoConfigurationEffectInfo.init(time: time, renderSize: renderSize, timeRange: timeRange)
-        finalImage = configuration.videoConfiguration.applyEffect(to: finalImage, info: info)
+        finalImage = videoConfiguration.applyEffect(to: finalImage, info: info)
         
         return finalImage
     }
@@ -122,13 +122,13 @@ open class TrackItem: NSObject, NSCopying, TransitionableVideoProvider, Transiti
     }
     
     open func configure(audioMixParameters: AVMutableAudioMixInputParameters) {
-        let volume = configuration.audioConfiguration.volume
+        let volume = audioConfiguration.volume
         audioMixParameters.setVolumeRamp(fromStartVolume: volume, toEndVolume: volume, timeRange: timeRange)
-        if configuration.audioConfiguration.nodes.count > 0 {
+        if audioConfiguration.nodes.count > 0 {
             if audioMixParameters.audioProcessingTapHolder == nil {
                 audioMixParameters.audioProcessingTapHolder = AudioProcessingTapHolder()
             }
-            audioMixParameters.audioProcessingTapHolder?.audioProcessingChain.nodes.append(contentsOf: configuration.audioConfiguration.nodes)
+            audioMixParameters.audioProcessingTapHolder?.audioProcessingChain.nodes.append(contentsOf: audioConfiguration.nodes)
         }
     }
     
@@ -146,27 +146,27 @@ private extension CIImage {
 
 public extension TrackItem {
     
-    public func makeFullRangeCopy() -> TrackItem {
+    func makeFullRangeCopy() -> TrackItem {
         let item = self.copy() as! TrackItem
         item.resource.selectedTimeRange = CMTimeRange.init(start: CMTime.zero, duration: item.resource.duration)
         item.startTime = CMTime.zero
         return item
     }
     
-    public func generateFullRangeImageGenerator(size: CGSize = .zero) -> AVAssetImageGenerator? {
+    func generateFullRangeImageGenerator(size: CGSize = .zero) -> AVAssetImageGenerator? {
         let item = makeFullRangeCopy()
         let imageGenerator = AVAssetImageGenerator.create(from: [item], renderSize: size)
         imageGenerator?.updateAspectFitSize(size)
         return imageGenerator
     }
     
-    public func generateFullRangePlayerItem(size: CGSize = .zero) -> AVPlayerItem? {
+    func generateFullRangePlayerItem(size: CGSize = .zero) -> AVPlayerItem? {
         let item = makeFullRangeCopy()
         let timeline = Timeline()
         timeline.videoChannel = [item]
         timeline.audioChannel = [item]
+        timeline.renderSize = size
         let generator = CompositionGenerator(timeline: timeline)
-        generator.renderSize = size
         let playerItem = generator.buildPlayerItem()
         return playerItem
     }
